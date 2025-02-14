@@ -1,0 +1,78 @@
+---
+- name: Deploy and Configure Azure VM with Docker and ACR
+  hosts: azure_vms
+  become: true
+
+  tasks:
+    - name: Update apt package index
+      apt:
+        update_cache: yes
+
+    - name: Install required dependencies
+      apt:
+        name:
+          - ca-certificates
+          - curl
+          - lsb-release
+          - gnupg
+          - docker.io
+        state: present
+
+    - name: Install Azure CLI
+      shell: curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+      args:
+        creates: /usr/bin/az
+
+    - name: Verify Azure CLI installation
+      command: az --version
+
+    - name: Login to Azure using managed identity
+      command: az login --identity
+
+    - name: Enable and start Docker service
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Verify Docker installation
+      command: docker --version
+
+    - name: Add user to Docker group
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+
+    - name: Reboot system to apply group changes
+      reboot:
+        msg: "Rebooting after adding user to Docker group"
+        reboot_timeout: 600
+
+    - name: Ensure Docker is running after reboot
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Login to Azure Container Registry (ACR)
+      command: az acr login --name rupeshcapstoneacr
+
+    - name: Pull Docker image from ACR
+      docker_image:
+        name: rupeshcapstoneacr.azurecr.io/my-app:latest
+        source: pull
+
+    - name: List Docker images
+      command: docker images
+
+    - name: Run Docker container for the application
+      docker_container:
+        name: my-app-container
+        image: rupeshcapstoneacr.azurecr.io/my-app:latest
+        state: started
+        published_ports:
+          - "8000:80"
+
+    - name: Verify running Docker containers
+      command: docker ps
