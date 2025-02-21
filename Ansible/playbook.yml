@@ -3,6 +3,19 @@
   hosts: azure_vms
   become: true
 
+  vars:
+    network_name: "my-app-network"
+    acr_name: "rupeshcapstoneacr"
+    mongodb_service_image: "{{ acr_name }}.azurecr.io/mongodb-service:latest"
+    mongodb_service_host_port: "5000"
+    mongodb_service_container_port: "5000"
+    auth_service_image: "{{ acr_name }}.azurecr.io/auth-service:latest"
+    auth_service_host_port: "4000"
+    auth_service_container_port: "4000"
+    frontend_image: "{{ acr_name }}.azurecr.io/frontend:latest"
+    frontend_host_port: "8000"
+    frontend_container_port: "80"
+
   tasks:
     - name: Update apt package index
       apt:
@@ -49,30 +62,69 @@
         msg: "Rebooting after adding user to Docker group"
         reboot_timeout: 600
 
+    - name: Wait for host to come back online
+      wait_for_connection:
+        delay: 10
+        timeout: 300
+
     - name: Ensure Docker is running after reboot
       systemd:
         name: docker
         state: started
         enabled: yes
 
-    - name: Login to Azure Container Registry (ACR)
-      command: az acr login --name rupeshcapstoneacr
+    - name: Create Docker network for the application
+      docker_network:
+        name: "{{ network_name }}"
+        state: present
 
-    - name: Pull Docker image from ACR
+    - name: Login to Azure Container Registry (ACR)
+      command: az acr login --name "{{ acr_name }}"
+
+    - name: Pull Frontend Docker image from ACR
       docker_image:
-        name: rupeshcapstoneacr.azurecr.io/my-app:latest
+        name: "{{ frontend_image }}"
+        source: pull
+    
+    - name: Pull Auth Service Docker image from ACR
+      docker_image:
+        name: "{{ auth_service_image }}"
+        source: pull
+
+    - name: Pull MongoDB Service Docker image from ACR
+      docker_image:
+        name: "{{ mongodb_service_image }}"
         source: pull
 
     - name: List Docker images
       command: docker images
 
-    - name: Run Docker container for the application
+    - name: Run Docker container for the MongoDB Service
       docker_container:
-        name: my-app-container
-        image: rupeshcapstoneacr.azurecr.io/my-app:latest
+        name: mongodb-service-container
+        image: "{{ mongodb_service_image }}"
+        network_mode: "{{ network_name }}"
         state: started
         published_ports:
-          - "8000:80"
+          - "{{ mongodb_service_host_port }}:{{ mongodb_service_container_port }}"
+    
+    - name: Run Docker container for the Auth Service
+      docker_container:
+        name: auth-service-container
+        image: "{{ auth_service_image }}"
+        network_mode: "{{ network_name }}"
+        state: started
+        published_ports:
+          - "{{ auth_service_host_port }}:{{ auth_service_container_port }}"
+
+    - name: Run Docker container for the Frontend
+      docker_container:
+        name: frontend-container
+        image: "{{ frontend_image }}"
+        network_mode: "{{ network_name }}"
+        state: started
+        published_ports:
+          - "{{ frontend_host_port }}:{{ frontend_container_port }}"
 
     - name: Verify running Docker containers
       command: docker ps
