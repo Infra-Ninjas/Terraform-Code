@@ -75,22 +75,34 @@ resource "azurerm_network_security_group" "test" {
     destination_address_prefix = "*"
   }
 
-  # Allow HTTP (port 80) for React app
   security_rule {
-    name                       = "Allow-Port-80"
+    name                       = "Allow-Port-4000"
     priority                   = 110
     direction                  = "Inbound"
     access                     = "Allow"
     protocol                   = "Tcp"
     source_port_range          = "*"
-    destination_port_range     = "80"
+    destination_port_range     = "4000"
     source_address_prefix      = "*"
     destination_address_prefix = "*"
   }
 
   security_rule {
-    name                       = "Allow-Port-8000"
+    name                       = "Allow-Port-5000"
     priority                   = 120
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "5000"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+
+  # Allow HTTP (port 8000) for React app
+  security_rule {
+    name                       = "Allow-Port-8000"
+    priority                   = 130
     direction                  = "Inbound"
     access                     = "Allow"
     protocol                   = "Tcp"
@@ -99,7 +111,6 @@ resource "azurerm_network_security_group" "test" {
     source_address_prefix      = "*"
     destination_address_prefix = "*"
   }
-
 }
 
 # --------------------------------------------------------
