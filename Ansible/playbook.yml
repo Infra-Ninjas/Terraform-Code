@@ -5,22 +5,16 @@
 
   vars:
     network_name: "my-app-network"
-    acr_name: "rupeshcapstoneacr"
-    mongodb_service_image: "{{ acr_name }}.azurecr.io/mongodb-service:latest"
-    mongodb_service_host_port: "5000"
-    mongodb_service_container_port: "5000"
-    auth_service_image: "{{ acr_name }}.azurecr.io/auth-service:latest"
-    auth_service_host_port: "4000"
-    auth_service_container_port: "4000"
-    frontend_image: "{{ acr_name }}.azurecr.io/frontend:latest"
-    frontend_host_port: "8000"
-    frontend_container_port: "80"
+    acr_name: "healthsyncacr"
+    services:
+      - { name: "db-service", port: 5000 }
+      - { name: "authentication-service", port: 4000 }
+      - { name: "admin-service", port: 4001 }
+      - { name: "user-service", port: 4002 }
+      - { name: "doctor-service", port: 4003 }
+      - { name: "frontend", port: 80 }
 
   tasks:
-    - name: Update apt package index
-      apt:
-        update_cache: yes
-
     - name: Install required dependencies
       apt:
         name:
@@ -29,40 +23,35 @@
           - lsb-release
           - gnupg
           - docker.io
+          - dnsutils
         state: present
+        update_cache: yes
 
     - name: Install Azure CLI
       shell: curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
       args:
         creates: /usr/bin/az
 
-    - name: Verify Azure CLI installation
-      command: az --version
-
     - name: Login to Azure using managed identity
       command: az login --identity
 
-    - name: Enable and start Docker service
+    - name: Ensure Docker service is running and enabled
       systemd:
         name: docker
         state: started
         enabled: yes
 
-    - name: Verify Docker installation
-      command: docker --version
-
-    - name: Add user to Docker group
+    - name: Add user to Docker group (if not already added)
       user:
         name: "{{ ansible_user }}"
         groups: docker
         append: yes
+      notify: Reboot system if user group changed
 
-    - name: Reboot system to apply group changes
-      reboot:
-        msg: "Rebooting after adding user to Docker group"
-        reboot_timeout: 600
+    - name: Flush handlers to trigger reboot if needed
+      meta: flush_handlers
 
-    - name: Wait for host to come back online
+    - name: Wait for host to come back online after reboot
       wait_for_connection:
         delay: 10
         timeout: 300
@@ -73,7 +62,7 @@
         state: started
         enabled: yes
 
-    - name: Create Docker network for the application
+    - name: Create Docker network (after reboot)
       docker_network:
         name: "{{ network_name }}"
         state: present
@@ -81,50 +70,32 @@
     - name: Login to Azure Container Registry (ACR)
       command: az acr login --name "{{ acr_name }}"
 
-    - name: Pull Frontend Docker image from ACR
+    - name: Pull all required Docker images from ACR
       docker_image:
-        name: "{{ frontend_image }}"
+        name: "{{ acr_name }}.azurecr.io/{{ item.name }}:latest"
         source: pull
-    
-    - name: Pull Auth Service Docker image from ACR
-      docker_image:
-        name: "{{ auth_service_image }}"
-        source: pull
+      loop: "{{ services }}"
 
-    - name: Pull MongoDB Service Docker image from ACR
-      docker_image:
-        name: "{{ mongodb_service_image }}"
-        source: pull
+    - name: Get public IP of Azure VM
+      shell: dig +short myip.opendns.com @resolver1.opendns.com
+      register: public_ip
+      changed_when: false
 
-    - name: List Docker images
-      command: docker images
-
-    - name: Run Docker container for the MongoDB Service
+    - name: Run Docker containers for services
       docker_container:
-        name: mongodb-service-container
-        image: "{{ mongodb_service_image }}"
+        name: "{{ item.name }}"
+        image: "{{ acr_name }}.azurecr.io/{{ item.name }}:latest"
         network_mode: "{{ network_name }}"
         state: started
         published_ports:
-          - "{{ mongodb_service_host_port }}:{{ mongodb_service_container_port }}"
-    
-    - name: Run Docker container for the Auth Service
-      docker_container:
-        name: auth-service-container
-        image: "{{ auth_service_image }}"
-        network_mode: "{{ network_name }}"
-        state: started
-        published_ports:
-          - "{{ auth_service_host_port }}:{{ auth_service_container_port }}"
-
-    - name: Run Docker container for the Frontend
-      docker_container:
-        name: frontend-container
-        image: "{{ frontend_image }}"
-        network_mode: "{{ network_name }}"
-        state: started
-        published_ports:
-          - "{{ frontend_host_port }}:{{ frontend_container_port }}"
+          - "{{ item.port }}:{{ item.port }}"
+      loop: "{{ services }}"
 
     - name: Verify running Docker containers
       command: docker ps
+
+  handlers:
+    - name: Reboot system if user group changed
+      reboot:
+        msg: "Rebooting after adding user to Docker group"
+        reboot_timeout: 300
